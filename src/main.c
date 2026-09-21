@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "parser.h"
+#include "executor.h"
 
 #define COLOR_CYAN "\033[1;36m"
 #define COLOR_RESET "\033[0m"
@@ -33,13 +34,7 @@ int main(void) {
         }
 
         if (parse_line(line, &pipeline) > 0) {
-            // Test temporal: Imprimir lo parseado
-            printf("[DEBUG] Comando: %s | Args: %d | Background: %s\n",
-                   pipeline.commands[0].argv[0],
-                   pipeline.commands[0].argc,
-                   pipeline.is_background ? "SI" : "NO");
-
-            // TODO Fase 2: Built-ins y Executor
+	execute_pipeline(&pipeline);
         }
     }
 
