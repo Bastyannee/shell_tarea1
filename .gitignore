@@ -1,0 +1,4 @@
+*.o
+mishell
+salida.txt
+.vscode/
