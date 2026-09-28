@@ -3,6 +3,7 @@
 
 #include "parser.h"
 
-void execute_pipeline(Pipeline *pipeline);
+// Devuelve 0 en operación normal y -1 si ocurrió un error fatal de fork().
+int execute_pipeline(Pipeline *pipeline);
 
 #endif
