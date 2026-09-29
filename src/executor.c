@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <fcntl.h>
@@ -12,13 +13,12 @@
 void execute_pipeline(Pipeline *pipeline) {
     if (pipeline->count == 0) return;
 
-    // Caso 1: Built-in único en el proceso padre
+    // Si es un comando interno unico (cd o exit) lo ejecutamos en el padre
     if (pipeline->count == 1 && is_builtin(pipeline->commands[0].argv[0])) {
         execute_builtin(&pipeline->commands[0]);
         return;
     }
 
-    // Preparar máscara para bloquear SIGCHLD durante la creación del job
     sigset_t mask, prev_mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGCHLD);
@@ -26,7 +26,7 @@ void execute_pipeline(Pipeline *pipeline) {
     int num_pipes = pipeline->count - 1;
     int pipefds[2 * MAX_CMDS];
 
-    // Instanciar todas las tuberías necesarias
+    // Crear todos los pipes que se necesiten
     for (int i = 0; i < num_pipes; i++) {
         if (pipe(pipefds + i * 2) < 0) {
             perror("pipe");
@@ -39,7 +39,7 @@ void execute_pipeline(Pipeline *pipeline) {
     for (int i = 0; i < pipeline->count; i++) {
         Command *cmd = &pipeline->commands[i];
         
-        // Bloquear SIGCHLD ANTES del fork para evitar condiciones de carrera
+        // Bloqueamos SIGCHLD antes del fork para que no haya drama al guardar el job
         sigprocmask(SIG_BLOCK, &mask, &prev_mask);
         
         pids[i] = fork();
@@ -50,18 +50,14 @@ void execute_pipeline(Pipeline *pipeline) {
         }
 
         if (pids[i] == 0) {
-            // =========================
-            // ESPACIO DEL HIJO
-            // =========================
+            // --- PROCESO HIJO ---
             
-            // 1. Restaurar máscara de señales
             sigprocmask(SIG_SETMASK, &prev_mask, NULL);
 
-            // 2. Aislamiento de Señales
             if (pipeline->is_background) {
-                setpgid(0, 0);
+                setpgid(0, 0); // Lo mandamos a su propio grupo para que ignore Ctrl+C
             } else {
-                // Si es foreground, DEBE morir con Ctrl+C o Ctrl+Quit
+                // En foreground, devolvemos las senales a la normalidad
                 struct sigaction sa_dfl;
                 sa_dfl.sa_handler = SIG_DFL;
                 sigemptyset(&sa_dfl.sa_mask);
@@ -70,7 +66,7 @@ void execute_pipeline(Pipeline *pipeline) {
                 sigaction(SIGQUIT, &sa_dfl, NULL);
             }
 
-            // 3. Conectar tuberías (Pipes)
+            // Conectar pipes (si no es el primero ni el ultimo)
             if (i > 0) { 
                 dup2(pipefds[(i - 1) * 2], STDIN_FILENO);
             }
@@ -78,7 +74,7 @@ void execute_pipeline(Pipeline *pipeline) {
                 dup2(pipefds[i * 2 + 1], STDOUT_FILENO);
             }
 
-            // 4. Conectar Redirecciones Explícitas (<, >, >>)
+            // Redirecciones con archivos (<, >, >>)
             if (cmd->input_file != NULL) {
                 int fd_in = open(cmd->input_file, O_RDONLY);
                 if (fd_in < 0) {
@@ -101,37 +97,50 @@ void execute_pipeline(Pipeline *pipeline) {
                 close(fd_out);
             }
 
-            // 5. Cerrar TODOS los descriptores de pipes en el hijo
+            // Cerrar todos los pipes en el hijo, super importante
             for (int j = 0; j < 2 * num_pipes; j++) {
                 close(pipefds[j]);
             }
 
-            // 6. Ejecutar binario
             execvp(cmd->argv[0], cmd->argv);
             perror("execvp");
             _exit(EXIT_FAILURE);
             
         } else {
-            // =========================
-            // ESPACIO DEL PADRE (SHELL)
-            // =========================
+            // --- PROCESO PADRE (LA SHELL) ---
             
-            // Registrar solo el comando líder del pipeline si es background
+            // Registramos el job cuando es background (usamos el ultimo comando del pipe)
             if (pipeline->is_background && i == pipeline->count - 1) {
-                int jid = add_job(pids[i], pipeline->commands[0].argv[0]);
+                char full_cmd[256] = "";
+                
+                // Reconstruir todo el comando con argumentos y pipes para mostrarlo bien
+                for (int c = 0; c < pipeline->count; c++) {
+                    Command *bcmd = &pipeline->commands[c];
+                    for (int k = 0; k < bcmd->argc; k++) {
+                        strncat(full_cmd, bcmd->argv[k], sizeof(full_cmd) - strlen(full_cmd) - 1);
+                        if (k < bcmd->argc - 1) {
+                            strncat(full_cmd, " ", sizeof(full_cmd) - strlen(full_cmd) - 1);
+                        }
+                    }
+                    if (c < pipeline->count - 1) {
+                        strncat(full_cmd, " | ", sizeof(full_cmd) - strlen(full_cmd) - 1);
+                    }
+                }
+
+                int jid = add_job(pids[i], full_cmd);
                 printf("[%d] %d\n", jid, pids[i]);
             }
-            // Desbloquear SIGCHLD tras registrar con éxito
+            
             sigprocmask(SIG_SETMASK, &prev_mask, NULL);
         }
     }
 
-    // REGLA CRÍTICA: Cerrar TODOS los descriptores de pipes en la Shell padre
+    // Cerrar los pipes en el padre para no quedarse pegado leyendo
     for (int i = 0; i < 2 * num_pipes; i++) {
         close(pipefds[i]);
     }
 
-    // Sincronización
+    // Esperar a que todo termine si esta en foreground
     if (!pipeline->is_background) {
         for (int i = 0; i < pipeline->count; i++) {
             int status;

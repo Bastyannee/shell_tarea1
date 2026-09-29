@@ -1,23 +1,21 @@
 #ifndef PARSER_H
 #define PARSER_H
 
-#include <stddef.h>
-
 #define MAX_ARGS 64
 #define MAX_CMDS 16
 
 typedef struct {
-    char *argv[MAX_ARGS];  // Argumentos terminados en NULL para execvp
-    int argc;              // Cantidad de argumentos en argv
-    char *input_file;      // Descriptor origen si existe '<', o NULL
-    char *output_file;     // Descriptor destino si existe '>' o '>>', o NULL
-    int append_output;     // 1 si la redirección es '>>' (O_APPEND), 0 si es '>' (O_TRUNC)
+    char *argv[MAX_ARGS];  
+    int argc;              
+    char *input_file;      
+    char *output_file;     
+    int append_output;     
 } Command;
 
 typedef struct {
-    Command commands[MAX_CMDS]; // Arreglo contiguo de N comandos encadenados por '|'
-    int count;                  // Cantidad total de comandos en la tubería (N <= MAX_CMDS)
-    int is_background;          // Bandera booleana: 1 si finaliza en '&', 0 en caso contrario
+    Command commands[MAX_CMDS]; 
+    int count;                  
+    int is_background;          
 } Pipeline;
 
 /**
@@ -32,6 +30,8 @@ int parse_line(char *line, Pipeline *pipeline);
 
 /**
  * @brief Libera los recursos dinámicos asociados al pipeline si los hubiera.
+ * 
+ * @param pipeline Puntero a la estructura Pipeline.
  */
 void free_pipeline(Pipeline *pipeline);
 
